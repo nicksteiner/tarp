@@ -21,8 +21,9 @@ targets Jammy (22.04) — so we can't `apt install ros-humble-rosbridge-suite`.
 Instead:
 
 1. Refresh the ROS2 apt signing key (rotated 2025-05; the base predates it).
-2. Install the Python runtime deps rosbridge needs (bson, cbor2, ujson, tornado,
-   pil, numpy) from focal universe — all rosdep-resolvable, no ROS debs.
+2. Install the Python runtime deps rosbridge needs from focal universe: bson,
+   ujson, tornado, pil, numpy. One package — cbor2 — isn't in focal apt
+   (jammy-only), so it comes from pip (same answer rosdep gives on focal).
 3. Clone `rosbridge_suite` (humble branch, v2.0.6) into `/ws/src`,
    `colcon build --packages-up-to rosbridge_suite --merge-install
    --cmake-args -DBUILD_TESTING=OFF`.

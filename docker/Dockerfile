@@ -30,22 +30,25 @@ RUN curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
         > /usr/share/keyrings/ros-archive-keyring.gpg
 
 # ---------------------------------------------------------------------------
-# Python runtime deps for rosbridge_server + rosbridge_library. These are
-# rosdep-resolved to focal apt packages; we install them directly (cheaper than
-# running rosdep install inside the image build).
-#   - cbor2, ujson, tornado: rosbridge_server transport + JSON
+# Python runtime deps for rosbridge_server + rosbridge_library.
+#   - bson, ujson, tornado: rosbridge_server transport + JSON
 #   - pil: rosbridge_library image conversion
 #   - numpy: replay node + (eventually) adequacy prototypes that get mounted in
+#   - cbor2: rosbridge_server binary transport. Not in focal apt (jammy-only),
+#     so install via pip as root into system site-packages. rosdep on focal
+#     resolves cbor2 to `#pip cbor2` for the same reason.
 # ---------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         python3-bson \
-        python3-cbor2 \
         python3-ujson \
         python3-pil \
         python3-tornado \
         python3-numpy \
+        python3-pip \
     && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir cbor2
 
 # ---------------------------------------------------------------------------
 # Build rosbridge_suite from source into an overlay workspace. The humble
