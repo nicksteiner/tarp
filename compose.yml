@@ -3,11 +3,16 @@
 # multicast gymnastics required.
 #
 # Usage:
-#   docker compose build          # first time / after Dockerfile changes
+#   UID=$(id -u) GID=$(id -g) docker compose build
 #   docker compose up rosbridge   # WebSocket bridge (port 9090)
 #   docker compose up replay      # synthetic PointCloud2 + Odometry publisher
 #   docker compose up webserver   # static file server for web/ (port 8000)
 #   docker compose up             # all three at once
+#
+# Bash doesn't export UID/GID by default, so pass them explicitly on the build
+# line (or put them in a .env file at the repo root). Skipping them makes the
+# container run as uid 1000 — usually right, but check with `id` first on the
+# Jetson.
 #
 # Override the repo path if compose is run from outside the tarp checkout:
 #   TARP_REPO=/home/user/tarp docker compose up
