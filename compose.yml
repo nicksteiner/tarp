@@ -1,0 +1,49 @@
+# TARP bridge stack. Runs alongside the existing lidar_slam container, which
+# also uses network_mode: host — they share the DDS graph automatically, no
+# multicast gymnastics required.
+#
+# Usage:
+#   docker compose build          # first time / after Dockerfile changes
+#   docker compose up rosbridge   # WebSocket bridge (port 9090)
+#   docker compose up replay      # synthetic PointCloud2 + Odometry publisher
+#   docker compose up webserver   # static file server for web/ (port 8000)
+#   docker compose up             # all three at once
+#
+# Override the repo path if compose is run from outside the tarp checkout:
+#   TARP_REPO=/home/user/tarp docker compose up
+
+x-tarp-common: &tarp-common
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+    args:
+      UID: ${UID:-1000}
+      GID: ${GID:-1000}
+  image: tarp-bridge:local
+  network_mode: host
+  environment:
+    ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+    RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+  volumes:
+    - ${TARP_REPO:-.}:/tarp
+  working_dir: /tarp
+  restart: unless-stopped
+
+services:
+  rosbridge:
+    <<: *tarp-common
+    container_name: tarp-rosbridge
+    command: >
+      ros2 launch rosbridge_server rosbridge_websocket_launch.xml
+      port:=9090
+
+  replay:
+    <<: *tarp-common
+    container_name: tarp-replay
+    command: python3 bridge/replay_node.py --synth --loop --rate 10
+    # No depends_on: replay publishes on DDS; it doesn't need rosbridge running.
+
+  webserver:
+    <<: *tarp-common
+    container_name: tarp-webserver
+    command: python3 scripts/serve.py --port 8000

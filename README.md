@@ -25,7 +25,23 @@ web/               deck.gl viewer (SPA)
 sim/               Algorithm simulations (solid-angle coverage, diversity)
 docs/              Method notes and design docs
 scripts/           Dev helpers
+docker/            Container image for the bridge stack
+compose.yml        Docker Compose service definitions
 ```
+
+## Bring-up (Jetson)
+
+The SLAM container (`lidar_slam`) uses `network_mode: host`. The TARP bridge
+container does too, so DDS discovery works without extra config.
+
+```bash
+docker compose build
+docker compose up            # rosbridge + replay + web server
+# then, on the tablet: http://<jetson-ip>:8000
+```
+
+See [docker/README.md](docker/README.md) for the swap-in path once real
+hardware replaces the synthetic replay.
 
 ## License
 

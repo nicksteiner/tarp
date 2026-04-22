@@ -25,6 +25,12 @@ syntax / data loading can be tested.
 
 ## Running with rosbridge
 
+**Docker (Jetson / preferred):** see [../docker/README.md](../docker/README.md)
+and the top-level `compose.yml`. `docker compose up` brings rosbridge, the
+replay node, and the static web server up together.
+
+**Bare metal (dev box with ROS2 installed):**
+
 ```
 # one terminal
 ros2 launch rosbridge_server rosbridge_websocket_launch.xml
