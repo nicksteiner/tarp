@@ -24,9 +24,10 @@ Instead:
 2. Install the Python runtime deps rosbridge needs from focal universe: bson,
    ujson, tornado, pil, numpy. One package — cbor2 — isn't in focal apt
    (jammy-only), so it comes from pip (same answer rosdep gives on focal).
-3. Clone `rosbridge_suite` (humble branch, v2.0.6) into `/ws/src`,
+3. Clone `rosbridge_suite` tag `2.0.1` into `/ws/src`,
    `colcon build --packages-up-to rosbridge_suite --merge-install
-   --cmake-args -DBUILD_TESTING=OFF`.
+   --cmake-args -DBUILD_TESTING=OFF`. Pinned to 2.0.1 because 2.0.2+
+   introduced Python 3.10-only syntax and the dustynv base is on Python 3.8.
 4. Entrypoint sources the base `/opt/ros/humble/install/setup.bash` and then
    the overlay `/ws/install/setup.bash`.
 

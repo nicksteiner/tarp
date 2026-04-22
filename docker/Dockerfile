@@ -51,16 +51,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip3 install --no-cache-dir cbor2
 
 # ---------------------------------------------------------------------------
-# Build rosbridge_suite from source into an overlay workspace. The humble
-# branch (v2.0.6) uses python3-bson for the bson encoder (installed above) and
-# doesn't need the rosidl_python source checkout that newer branches do.
-# --merge-install flattens the overlay into a single share/lib/include triple.
-# BUILD_TESTING=OFF drops ament_cmake_mypy and control_msgs test-deps that
-# aren't available on focal; we're not running tests in this image.
+# Build rosbridge_suite from source into an overlay workspace.
 #
-# Branch is pinned deliberately — avoid the rolling `ros2` branch upstream.
+# Pinned to tag 2.0.1. rosbridge_suite 2.0.2 (PR #1098) introduced PEP 604
+# type-union syntax (`X | Y`) and `typing.ParamSpec`, both Python 3.10+. The
+# dustynv base runs on focal's Python 3.8.10, so 2.0.2+ crashes at module load
+# on this image. If we ever move to a Python 3.10 base we can bump this.
+#
+# python3-bson (installed above) covers the bson encoder; the humble-series of
+# rosbridge doesn't need the rosidl_python source checkout that newer
+# branches do. --merge-install flattens the overlay into a single
+# share/lib/include triple. BUILD_TESTING=OFF drops ament_cmake_mypy and
+# control_msgs test-deps that aren't available on focal; we're not running
+# tests in this image.
 # ---------------------------------------------------------------------------
-ARG ROSBRIDGE_REF=humble
+ARG ROSBRIDGE_REF=2.0.1
 
 RUN mkdir -p /ws/src && cd /ws/src \
  && git clone --depth 1 --branch ${ROSBRIDGE_REF} https://github.com/RobotWebTools/rosbridge_suite.git
