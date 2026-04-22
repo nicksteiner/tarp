@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Claude Code per-user state
+.claude/
+
+# Local data drops — recordings, plot exports, etc.
+data/
+recordings/
+*.bag
+*.db3
+*.mcap
+
+# Node (if/when we add a build step)
+node_modules/
+dist/

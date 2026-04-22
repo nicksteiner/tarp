@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>TARP</title>
+  <link rel="stylesheet" href="src/style.css" />
+</head>
+<body>
+  <div id="map"></div>
+
+  <header id="topbar">
+    <span class="brand">TARP</span>
+    <span id="status" class="status offline">offline</span>
+  </header>
+
+  <aside id="hud">
+    <div class="metric"><span class="label">points/s</span><span id="pps" class="value">—</span></div>
+    <div class="metric"><span class="label">frames</span><span id="fcount" class="value">0</span></div>
+    <div class="metric"><span class="label">odom</span><span id="odom" class="value">—</span></div>
+  </aside>
+
+  <nav id="controls">
+    <button id="btn-record" class="primary">record</button>
+    <button id="btn-waypoint">waypoint</button>
+    <button id="btn-flag" class="warn">flag</button>
+  </nav>
+
+  <script src="vendor/deck.min.js"></script>
+  <script src="vendor/roslib.min.js"></script>
+  <script src="src/ros.js"></script>
+  <script src="src/main.js"></script>
+</body>
+</html>
