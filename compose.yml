@@ -26,6 +26,7 @@ x-tarp-common: &tarp-common
       GID: ${GID:-1000}
   image: tarp-bridge:local
   network_mode: host
+  ipc: host
   environment:
     ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
     RMW_IMPLEMENTATION: rmw_fastrtps_cpp
