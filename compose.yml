@@ -73,9 +73,15 @@ services:
     container_name: tarp-m5-bridge
     # USB-CDC link to the M5Stack Core2 (m5tough) running the firmware in
     # ~/m5tough. Default device matches the Jetson's first ACM port.
+    # TARP_USB_MOUNT is the host-side path the operator's USB drive mounts at;
+    # the bridge polls disk_usage there so the Core2 header shows the fill %.
+    # The path needs to be bind-mounted into the container too — easiest with
+    # a docker-compose.override.yml that adds a `volumes:` entry. If unset,
+    # the bridge falls back to /tarp/usb/fill (Int8) published by the worker.
     command: >
       python3 bridge/m5_bridge.py
       --port ${TARP_M5_PORT:-/dev/ttyACM0}
+      ${TARP_USB_MOUNT:+--usb-mount ${TARP_USB_MOUNT}}
     devices:
       - "${TARP_M5_PORT:-/dev/ttyACM0}:${TARP_M5_PORT:-/dev/ttyACM0}"
     profiles: ["live"]

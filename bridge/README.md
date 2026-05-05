@@ -59,11 +59,13 @@ the operator keep the tablet in a pocket and still see pose / path / recording
 state on a wrist-mounted Core2 with chunky buttons that survive cold + gloves.
 
 ```
-python3 bridge/m5_bridge.py --port /dev/ttyACM0
+python3 bridge/m5_bridge.py --port /dev/ttyACM0 --usb-mount /media/usb
 ```
 
 If the serial device is missing the node logs and keeps retrying every 5 s, so
 the operator can plug the Core2 in mid-mission without restarting the bridge.
+`--usb-mount` is optional — leave it off to disable disk polling and drive the
+USB fill % from `/tarp/usb/fill` (Int8) only.
 
 ### Wire protocol
 
@@ -72,32 +74,40 @@ lines so the same stream can carry free-form debug.
 
 **Host → device** (this node emits):
 
-| Line                   | Meaning                                        |
-|------------------------|------------------------------------------------|
-| `P <x> <y> <z>`        | pose update in metres (throttled to 10 Hz)     |
-| `S <path_m> <map_pts>` | path length + map cardinality (~1 Hz)          |
-| `R <0\|1>`             | recording state                                |
-| `L online`             | link heartbeat (~0.5 Hz)                       |
+| Line                          | Meaning                                              |
+|-------------------------------|------------------------------------------------------|
+| `P <x> <y> <z>`               | pose update in metres (throttled to 10 Hz)           |
+| `S <path_m> <map_pts>`        | path length + map cardinality (~1 Hz)                |
+| `R <0\|1>`                    | recording state                                      |
+| `L online`                    | link heartbeat (~0.5 Hz)                             |
+| `D <idle\|busy\|ok\|fail>`    | dump status — echoed from `/tarp/dump/state` (worker) |
+| `U <pct>`                     | USB drive fill %, 0–100 (or -1 for no drive)         |
 
 **Device → host** (Core2 firmware emits):
 
-| Line          | Meaning                                       |
-|---------------|-----------------------------------------------|
-| `booted`      | firmware just (re)started — host re-syncs     |
-| `BTN START`   | operator pressed START                        |
-| `BTN STOP`    | operator pressed STOP                         |
-| `WPT`         | waypoint requested (firmware not wired yet)   |
-| `FLAG`        | anomaly flagged (firmware not wired yet)      |
+| Line          | Meaning                                          |
+|---------------|--------------------------------------------------|
+| `booted`      | firmware just (re)started — host re-syncs        |
+| `BTN START`   | operator pressed START                           |
+| `BTN STOP`    | operator pressed STOP (hold-to-confirm)          |
+| `BTN DUMP`    | operator requested rosbag/snapshot dump          |
+| `WPT`         | waypoint requested (firmware not wired yet)     |
+| `FLAG`        | anomaly flagged (firmware not wired yet)         |
+| `SESS <n>`    | persisted session id, after each START           |
 
 ### Republished topics
 
-| Topic              | Type            | Notes                                       |
-|--------------------|-----------------|---------------------------------------------|
-| `/tarp/cmd/record` | `std_msgs/Bool` | flips on `BTN START` / `BTN STOP`           |
-| `/tarp/cmd/event`  | `std_msgs/String` | `"waypoint"` or `"flag"` on the equivalent device line |
+| Topic              | Type               | Direction | Notes                                                      |
+|--------------------|--------------------|-----------|------------------------------------------------------------|
+| `/tarp/cmd/record` | `std_msgs/Bool`    | pub       | flips on `BTN START` / `BTN STOP`                          |
+| `/tarp/cmd/event`  | `std_msgs/String`  | pub       | `"waypoint"` or `"flag"` on the equivalent device line     |
+| `/tarp/cmd/dump`   | `std_msgs/Empty`   | pub + sub | published on `BTN DUMP`; subscribed so a host-side trigger (CLI) also nudges the firmware to "busy" |
+| `/tarp/dump/state` | `std_msgs/String`  | sub       | worker reports `idle\|busy\|ok\|fail` → forwarded as `D`    |
+| `/tarp/usb/fill`   | `std_msgs/Int8`    | sub       | overrides polled disk usage; -1..100                       |
 
-`rosbag record` triggering hangs off `/tarp/cmd/record`; that wiring lives in
-a follow-on directive (no work yet).
+`rosbag record` triggering hangs off `/tarp/cmd/record`; the dump-to-USB
+worker that fulfils `/tarp/cmd/dump` and reports `/tarp/dump/state` lives in
+a sibling directive (D108).
 
 ## Running with rosbridge
 

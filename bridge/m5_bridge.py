@@ -15,10 +15,13 @@ Wire protocol (ASCII, '\\n'-terminated, lossy-tolerant):
     S <path_m> <map_pts>     stats, updated at ~1 Hz
     R <0|1>                  recording state
     L <online|offline>       link/health indicator for the header
+    D <idle|busy|ok|fail>    dump status (echo + worker progress)
+    U <pct>                  USB-drive fill % (0-100, -1 = no drive)
 
   Device -> host:
     BTN START                operator pressed START
     BTN STOP                 operator pressed STOP
+    BTN DUMP                 operator requested rosbag/snapshot to USB
     WPT                      waypoint requested (future)
     FLAG                     anomaly flagged (future)
     booted                   firmware reset notification
@@ -32,10 +35,20 @@ This node:
   * computes path length and publishes stats at ~1 Hz;
   * sends pose at the odom rate (10 Hz typical, throttled if higher);
   * publishes /tarp/cmd/record (std_msgs/Bool) on BTN START/STOP so the
-    rest of the stack can react (rosbag triggers will hang off this later).
+    rest of the stack can react (rosbag triggers will hang off this later);
+  * publishes /tarp/cmd/dump (std_msgs/Empty) on BTN DUMP — a separate
+    worker (D108) writes the bag/snapshot to the USB mount and reports
+    progress on /tarp/dump/state (String: idle|busy|ok|fail) which this
+    node relays to the firmware as `D <state>`. The bridge also subscribes
+    to /tarp/cmd/dump itself so a host-side trigger (e.g. CLI publish) sets
+    the firmware to "busy" the same way a button press does;
+  * polls disk usage on --usb-mount (if set) every --usb-poll-s seconds and
+    sends `U <pct>` so the operator can see remaining capacity before
+    starting a long dump. /tarp/usb/fill (Int8) overrides the polled value
+    if a more authoritative source exists.
 
 Run separately:
-    python3 bridge/m5_bridge.py --port /dev/ttyACM0
+    python3 bridge/m5_bridge.py --port /dev/ttyACM0 --usb-mount /media/usb
 
 If the serial port is missing, the node logs a warning every 5 s and keeps
 trying — this matches how the operator may plug the Core2 in mid-mission.
@@ -45,6 +58,8 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
+import shutil
 import sys
 import threading
 import time
@@ -56,7 +71,7 @@ try:
     from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
     from nav_msgs.msg import Odometry
     from sensor_msgs.msg import PointCloud2
-    from std_msgs.msg import Bool, String
+    from std_msgs.msg import Bool, Empty, Int8, String
     HAS_ROS = True
 except ImportError:
     HAS_ROS = False
@@ -71,6 +86,12 @@ except ImportError:
 
 POSE_THROTTLE_HZ = 10.0
 STATS_HZ = 1.0
+USB_POLL_S_DEFAULT = 5.0
+
+# Valid dump states echoed back to firmware. Anything else from /tarp/dump/state
+# is silently dropped — the firmware would just ignore it but logging keeps the
+# wire clean during bring-up.
+DUMP_STATES = ("idle", "busy", "ok", "fail")
 
 
 class M5Serial:
@@ -139,7 +160,9 @@ class M5Serial:
 
 
 class M5BridgeNode(Node):
-    def __init__(self, port: str, baud: int):
+    def __init__(self, port: str, baud: int,
+                 usb_mount: Optional[str] = None,
+                 usb_poll_s: float = USB_POLL_S_DEFAULT):
         super().__init__("tarp_m5_bridge")
         self.serial = M5Serial(port, baud, self.get_logger())
 
@@ -159,18 +182,40 @@ class M5BridgeNode(Node):
         self.map_pts = 0
         self.recording = False
         self.last_pose_send = 0.0
+        # Cached so a Core2 reboot can resync the screen without waiting for
+        # the next worker update or USB poll.
+        self.last_dump_state = "idle"
+        self.last_usb_pct = -1
+        self.usb_mount = usb_mount
 
         self.create_subscription(Odometry, "/tarp/odom", self._on_odom, odom_qos)
         self.create_subscription(
             PointCloud2, "/tarp/points", self._on_cloud, cloud_qos,
         )
+        # Host-side dump trigger: anything publishing on /tarp/cmd/dump (the
+        # bridge itself on BTN DUMP, or an external CLI / rosbag-control node)
+        # gives the operator the same "busy" feedback on the firmware. The
+        # actual write lives in a separate worker (D108) that reports back on
+        # /tarp/dump/state.
+        self.create_subscription(Empty, "/tarp/cmd/dump", self._on_dump_trigger, 10)
+        self.create_subscription(String, "/tarp/dump/state", self._on_dump_state, 10)
+        # Optional override — if some other node has a more accurate USB read,
+        # it can publish on /tarp/usb/fill (Int8, -1..100) and we'll forward
+        # that value instead of the polled disk_usage result.
+        self.create_subscription(Int8, "/tarp/usb/fill", self._on_usb_fill, 10)
 
         self.cmd_record_pub = self.create_publisher(Bool, "/tarp/cmd/record", 10)
         self.cmd_event_pub = self.create_publisher(String, "/tarp/cmd/event", 10)
+        self.cmd_dump_pub = self.create_publisher(Empty, "/tarp/cmd/dump", 10)
 
         self.create_timer(1.0 / STATS_HZ, self._stats_tick)
         self.create_timer(0.05, self._serial_pump)
         self.create_timer(2.0, self._link_tick)
+        if self.usb_mount:
+            self.create_timer(usb_poll_s, self._usb_tick)
+            # Send an initial reading immediately rather than after the first
+            # poll period — the firmware shows "USB --" until something arrives.
+            self._usb_tick()
 
     def _on_odom(self, msg: Odometry) -> None:
         p = msg.pose.pose.position
@@ -201,6 +246,55 @@ class M5BridgeNode(Node):
         # Heartbeat — keeps the Core2 header label fresh even if odom drops.
         self.serial.write_line("L online")
 
+    def _usb_tick(self) -> None:
+        # `disk_usage` raises FileNotFoundError if the path is missing — that's
+        # the "drive not plugged in" case, so we send -1 instead of crashing.
+        # Any other error (permissions, stale mount) we also report as -1 and
+        # log once per occurrence; better to show "no drive" than to lie.
+        pct = -1
+        try:
+            if self.usb_mount and os.path.ismount(self.usb_mount):
+                u = shutil.disk_usage(self.usb_mount)
+                if u.total > 0:
+                    pct = int(round(100.0 * (u.total - u.free) / u.total))
+                    pct = max(0, min(100, pct))
+        except OSError as e:
+            self.get_logger().warning(f"usb poll failed ({self.usb_mount}): {e}")
+        if pct != self.last_usb_pct:
+            self.last_usb_pct = pct
+        # Always send: the firmware fades the badge naturally if value stops
+        # changing, and 1/(usb_poll_s) Hz is too slow for the reader to mind
+        # the duplicates.
+        self.serial.write_line(f"U {pct}")
+
+    def _on_dump_trigger(self, _msg) -> None:
+        # Mirror BTN DUMP semantics into the firmware regardless of who
+        # published the trigger: the firmware sets DUMP_BUSY on its own when
+        # the operator pressed the button, but a CLI-initiated dump needs the
+        # explicit nudge to keep the screen honest. Worker progress comes in
+        # later via _on_dump_state.
+        self.last_dump_state = "busy"
+        self.serial.write_line("D busy")
+
+    def _on_dump_state(self, msg) -> None:
+        s = (msg.data or "").strip().lower()
+        if s not in DUMP_STATES:
+            self.get_logger().warning(f"ignoring /tarp/dump/state={msg.data!r}")
+            return
+        self.last_dump_state = s
+        self.serial.write_line(f"D {s}")
+
+    def _on_usb_fill(self, msg) -> None:
+        # Int8 is signed (-128..127); clamp to the firmware's expected range
+        # and trust the publisher to mean what they say.
+        pct = int(msg.data)
+        if pct < -1:
+            pct = -1
+        if pct > 100:
+            pct = 100
+        self.last_usb_pct = pct
+        self.serial.write_line(f"U {pct}")
+
     def _serial_pump(self) -> None:
         line = self.serial.readline()
         if not line:
@@ -213,16 +307,26 @@ class M5BridgeNode(Node):
             self.recording = False
             self.cmd_record_pub.publish(Bool(data=False))
             self.serial.write_line("R 0")
+        elif line == "BTN DUMP":
+            # Publish the trigger; the subscription callback (_on_dump_trigger)
+            # will set the firmware to busy. Routing through the topic — rather
+            # than a direct serial write here — keeps a single code path for
+            # both button- and CLI-initiated dumps.
+            self.cmd_dump_pub.publish(Empty())
         elif line == "WPT":
             self.cmd_event_pub.publish(String(data="waypoint"))
         elif line == "FLAG":
             self.cmd_event_pub.publish(String(data="flag"))
         elif line == "booted":
             # Core2 just (re)started — push current state so the screen
-            # isn't left showing zeros.
+            # isn't left showing zeros. Includes the cached dump state and
+            # USB fill so a reboot mid-dump doesn't strand the operator
+            # with a stale "DMP" badge.
             self.serial.write_line(f"R {1 if self.recording else 0}")
             self.serial.write_line(f"S {self.path_m:.2f} {self.map_pts}")
             self.serial.write_line("L online")
+            self.serial.write_line(f"D {self.last_dump_state}")
+            self.serial.write_line(f"U {self.last_usb_pct}")
         # Unknown lines are ignored — the Core2 also prints free-form debug
         # to Serial, and we don't want to crash on it.
 
@@ -231,6 +335,13 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", default="/dev/ttyACM0", help="USB-CDC serial port")
     ap.add_argument("--baud", type=int, default=115200)
+    ap.add_argument("--usb-mount", default=None,
+                    help="Mount point of the USB drive used for dumps. "
+                         "If set, the bridge polls disk_usage and forwards the "
+                         "fill %% to the Core2. Skip to disable polling and rely "
+                         "on /tarp/usb/fill instead.")
+    ap.add_argument("--usb-poll-s", type=float, default=USB_POLL_S_DEFAULT,
+                    help="Seconds between disk_usage polls (default: 5).")
     args = ap.parse_args()
 
     if not HAS_ROS:
@@ -243,7 +354,9 @@ def main() -> int:
         return 2
 
     rclpy.init()
-    node = M5BridgeNode(args.port, args.baud)
+    node = M5BridgeNode(args.port, args.baud,
+                        usb_mount=args.usb_mount,
+                        usb_poll_s=args.usb_poll_s)
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
