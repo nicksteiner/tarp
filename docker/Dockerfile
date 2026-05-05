@@ -48,7 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --no-cache-dir cbor2
+RUN pip3 install --no-cache-dir cbor2 pyserial
 
 # ---------------------------------------------------------------------------
 # Build rosbridge_suite from source into an overlay workspace.

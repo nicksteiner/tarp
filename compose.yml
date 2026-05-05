@@ -5,9 +5,9 @@
 # Usage:
 #   UID=$(id -u) GID=$(id -g) docker compose build
 #   docker compose up rosbridge   # WebSocket bridge (port 9090)
-#   docker compose up replay      # synthetic PointCloud2 + Odometry publisher
 #   docker compose up webserver   # static file server for web/ (port 8000)
-#   docker compose up             # all three at once
+#   docker compose --profile synth up     # synthetic-data dev path
+#   docker compose --profile live  up     # talk to lidar_slam + Core2
 #
 # Bash doesn't export UID/GID by default, so pass them explicitly on the build
 # line (or put them in a .env file at the repo root). Skipping them makes the
@@ -16,6 +16,13 @@
 #
 # Override the repo path if compose is run from outside the tarp checkout:
 #   TARP_REPO=/home/user/tarp docker compose up
+#
+# Profiles:
+#   `synth`: brings up `replay` (synthetic PointCloud2 + Odometry generator).
+#   `live`:  brings up `slam_bridge` (FAST-LIO/LIO-SAM -> /tarp/* relabel) and
+#            `m5_bridge` (USB-CDC link to the M5Stack Core2 m5tough firmware).
+# Run only one of `replay` or `slam_bridge` at a time — both publish on
+# /tarp/points and /tarp/odom, and dual publishers will fight in the viewer.
 
 x-tarp-common: &tarp-common
   build:
@@ -48,6 +55,30 @@ services:
     container_name: tarp-replay
     command: python3 bridge/replay_node.py --synth --loop --rate 10
     # No depends_on: replay publishes on DDS; it doesn't need rosbridge running.
+    profiles: ["synth"]
+
+  slam_bridge:
+    <<: *tarp-common
+    container_name: tarp-slam-bridge
+    # Re-publishes lidar_slam's FAST-LIO topics on the viewer-facing /tarp/*
+    # topics. Switch source to `liosam` once D102/D103 ship on the SLAM side.
+    command: >
+      python3 bridge/slam_bridge.py
+      --source ${TARP_SLAM_SOURCE:-fastlio_fairy}
+      --max-points ${TARP_MAX_POINTS:-5000}
+    profiles: ["live"]
+
+  m5_bridge:
+    <<: *tarp-common
+    container_name: tarp-m5-bridge
+    # USB-CDC link to the M5Stack Core2 (m5tough) running the firmware in
+    # ~/m5tough. Default device matches the Jetson's first ACM port.
+    command: >
+      python3 bridge/m5_bridge.py
+      --port ${TARP_M5_PORT:-/dev/ttyACM0}
+    devices:
+      - "${TARP_M5_PORT:-/dev/ttyACM0}:${TARP_M5_PORT:-/dev/ttyACM0}"
+    profiles: ["live"]
 
   webserver:
     <<: *tarp-common
