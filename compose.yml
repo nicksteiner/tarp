@@ -53,3 +53,27 @@ services:
     <<: *tarp-common
     container_name: tarp-webserver
     command: python3 scripts/serve.py --port 8000
+
+  m5bridge:
+    <<: *tarp-common
+    container_name: tarp-m5bridge
+    # pid: host so /proc/mounts inside the container reflects the actual
+    # host mounts — that's how the bridge discovers inserted USB drives.
+    # privileged: true is the simplest way to get hot-plugged ttyUSB/ttyACM
+    # nodes through; can be tightened to `device_cgroup_rules` later if
+    # security review wants it.
+    pid: host
+    privileged: true
+    volumes:
+      - ${TARP_REPO:-.}:/tarp
+      - /media:/media:rshared
+      - /mnt:/mnt:rshared
+      - /run/media:/run/media:rshared
+    command: >
+      python3 bridge/m5_bridge.py
+      --bags-root /tarp/bags
+      --usb-roots /media /mnt /run/media
+    # Off by default — `docker compose --profile m5 up m5bridge` to enable.
+    # Most dev boxes don't have a Core2 attached and the bridge would just
+    # log "no Core2 found" forever.
+    profiles: ["m5"]

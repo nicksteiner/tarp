@@ -50,6 +50,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN pip3 install --no-cache-dir cbor2
 
+# pyserial drives the m5_bridge USB-CDC link to the M5Stack Core2 tactile
+# display. Tiny pure-Python package; no apt equivalent on focal.
+RUN pip3 install --no-cache-dir pyserial
+
 # ---------------------------------------------------------------------------
 # Build rosbridge_suite from source into an overlay workspace.
 #

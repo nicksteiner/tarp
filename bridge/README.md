@@ -23,6 +23,40 @@ python3 replay_node.py --input /path/to/recording.npz --rate 10
 On a dev machine without ROS2 installed, it falls back to a stdout dry-run so
 syntax / data loading can be tested.
 
+## `m5_bridge.py`
+
+Host side of the M5Stack Core2 tactile companion display protocol — see
+firmware at `~/m5tough/src/main.cpp` for the device-side line-format docs.
+
+The bridge auto-detects the Core2 USB-CDC port by VID:PID, drives
+`P / S / R / L / U / D` lines from rclpy subscriptions on `/tarp/odom`,
+`/tarp/points`, and `/tarp/recording_state`, and re-publishes button events
++ session ids onto `/tarp/recording_request` (Bool) and
+`/tarp/session_id` (UInt32).
+
+`BTN DUMP` from the device rsyncs the most-recently-modified subdir of
+`--bags-root` into `<usb_mount>/tarp_session_<n>_<bag-name>/`, sending
+`D busy` → `D ok | D fail` back to the device. USB drive fill is reported
+every 5 s as `U <pct>` (or `U -1` when no drive is mounted under
+`/media`, `/mnt`, or `/run/media`).
+
+```
+# typical: rclpy + autodetected port + default ~/.ros/bags as bag root
+python3 bridge/m5_bridge.py
+
+# explicit port
+python3 bridge/m5_bridge.py --port /dev/ttyACM0
+
+# bench bring-up: stdout-only (no Core2, no ROS2 — just prints what would
+# go to the device, useful to confirm sim cadence and USB polling)
+python3 bridge/m5_bridge.py --no-port --no-ros
+
+# real device, no ROS yet (still drives Lissajous sim into the Core2)
+python3 bridge/m5_bridge.py --no-ros
+```
+
+Tests (no hardware required): `python3 -m pytest bridge/test_m5_bridge.py -v`
+
 ## Running with rosbridge
 
 **Docker (Jetson / preferred):** see [../docker/README.md](../docker/README.md)
